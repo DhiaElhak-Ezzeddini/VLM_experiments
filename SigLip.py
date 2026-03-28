@@ -3,7 +3,7 @@ import torch.nn as nn
 
 from typing import Tuple, Optional
 
-class SigLipVisionConfig:
+class SiglipVisionConfig:
     def __init__(
             self,
             hidden_size=768,
@@ -32,7 +32,7 @@ class SigLipVisionConfig:
 
 
 class SiglipMLP(nn.Module):
-    def __init__(self,config:SigLipVisionConfig):
+    def __init__(self,config:SiglipVisionConfig):
         super().__init__()
         self.fc1 = nn.Linear(config.hidden_size,config.intermediate_size)
         self.fc2 = nn.Linear(config.intermediate_size,config.hidden_size)
@@ -48,7 +48,7 @@ class SiglipMLP(nn.Module):
 class SiglipAttention(nn.Module):
     """ Multi Head attentio - without masking """
 
-    def __init__(self,config:SigLipVisionConfig):
+    def __init__(self,config:SiglipVisionConfig):
         super().__init__()
         self.config = config
         self.embed_dim = config.hidden_size
@@ -95,7 +95,7 @@ class SiglipAttention(nn.Module):
 
 
 class SiglipEncoder(nn.Module):
-    def __init__(self,config:SigLipVisionConfig):
+    def __init__(self,config:SiglipVisionConfig):
         super().__init__()
         self.config = config
         self.layers = nn.ModuleList([SiglipEncoderLayer(config) for _ in range(config.num_hidden_layers)])
@@ -108,7 +108,7 @@ class SiglipEncoder(nn.Module):
 
         
 class SiglipEncoderLayer(nn.Module):
-    def __init__(self,config:SigLipVisionConfig):
+    def __init__(self,config:SiglipVisionConfig):
         super().__init__()
 
         self.embed_dim = config.hidden_size
@@ -131,8 +131,8 @@ class SiglipEncoderLayer(nn.Module):
 
 
 
-class SigLipVisionEmbeddings(nn.Module):
-    def __init__(self,config:SigLipVisionConfig):
+class SiglipVisionEmbeddings(nn.Module):
+    def __init__(self,config:SiglipVisionConfig):
         super().__init__()
         self.config =config
         self.embed_dim = self.config.hidden_size
@@ -163,27 +163,27 @@ class SigLipVisionEmbeddings(nn.Module):
 
         return embeddings
 
-class SigLipVisionEncoder(nn.Module):
-    def __init__(self,config:SigLipVisionConfig):
+class SiglipVisionEncoder(nn.Module):
+    def __init__(self,config:SiglipVisionConfig):
         super().__init__()
         self.config = config
         self.layers = nn.ModuleList([SiglipEncoderLayer(config) for _ in range(config.num_hidden_layers)])
 
 
-class SigLipVisionTransformer(nn.Module):
-    def __init__(self,config:SigLipVisionConfig): 
+class SiglipVisionTransformer(nn.Module):
+    def __init__(self,config:SiglipVisionConfig): 
         super().__init__()
         self.config = config
         embed_dim = self.config.hidden_size
-        self.embeddings = SigLipVisionEmbeddings(config)
-        self.encoder = SigLipVisionEncoder(config)
+        self.embeddings = SiglipVisionEmbeddings(config)
+        self.encoder = SiglipVisionEncoder(config)
         self.post_layernorm = nn.LayerNorm(embed_dim, eps=self.config.layer_norm_eps)
 
-class SigLipModel(nn.Module):
-    def __init__(self,config:SigLipVisionConfig):
+class SiglipVisionModel(nn.Module):
+    def __init__(self,config:SiglipVisionConfig):
         super().__init__()
         self.config = config 
-        self.vision_model = SigLipVisionTransformer(config)
+        self.vision_model = SiglipVisionTransformer(config)
     
     def forward(self, pixel_vals):
         ## (B,C,H,W) --> (B,num_patches,embed_dim)
