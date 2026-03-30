@@ -1,6 +1,6 @@
 #! /bin/bash
 MODEL_PATH="$HOME/VLM_experiments/paligemma-weights/paligemma-3b-pt-224"
-PROMPT=""
+PROMPT="The name of this bridge is "
 IMAGE_PATH="$HOME/VLM_experiments/images/test_image_bridge.jpg"
 MAX_TOKENS_TO_GENERATE=100
 TEMPERATURE=0.8
@@ -8,7 +8,7 @@ TOP_P=0.9
 DO_SAMPLE="False"
 ONLY_CPU="False"
 
-python inference.py \
+/usr/bin/python3 inference.py \
     --model_path "$MODEL_PATH" \
     --prompt "$PROMPT" \
     --image_path "$IMAGE_PATH" \
