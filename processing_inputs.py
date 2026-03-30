@@ -1,9 +1,17 @@
 from typing import Dict, List, Tuple, Optional,Union, Iterable
 from cv2 import normalize
+from torchvision import transforms
 import numpy as np 
 import torch 
 from PIL import Image
 
+IMAGE_MEAN = [0.5,0.5,0.5]
+IMAGE_STD  = [0.5,0.5,0.5]
+
+normalize_image = transforms.Compose([
+    transforms.ToTensor(),
+    transforms.Normalize(mean=IMAGE_MEAN, std=IMAGE_STD)
+])
 
 def add_image_tokens_to_prompt(
         prefix_prompt: str,
@@ -20,7 +28,7 @@ def resize(
         image:Image, 
         size:Tuple[int,int], 
         resample:Image.Resampling,
-        reducing_gap:Optional[int]
+        reducing_gap:Optional[int]=None
         ) -> np.ndarray:
     h,w = size
     resized_image = image.resize((h,w), resample=resample, reducing_gap=reducing_gap)
@@ -35,10 +43,6 @@ def rescale(
     rescaled_image = image*scale
     rescaled_image = rescaled_image.astype(dtype)
     return rescaled_image
-
-
-IMAGE_MEAN = [0.5,0.5,0.5]
-IMAGE_STD  = [0.5,0.5,0.5]
 
 def process_images(
         images: List[Image.Image], 
@@ -55,9 +59,9 @@ def process_images(
 
     images  = [rescale(image, scale=rescale_factor) for image in images]
 
-    images = [normalize(image, mean=image_mean, std=image_std) for image in images]
-    images = [image.transpose(2, 0, 1) for image in images]  # Change to (C, H, W)
-
+    images = [normalize_image(image) for image in images] ## now images are tensors and normalized to have mean 0.5 and std 0.5
+    #print(f"Processed images shape (C, H, W): {images[0].shape}")
+    images = [image.detach().cpu().numpy() for image in images]  # Convert to numpy arrays
     return images 
 
 
@@ -66,7 +70,7 @@ class PaliGemmaProcessor :
     def __init__(self,tokenizer, num_images_tokens:int, image_size:int):
         super().__init__()  
         self.image_size = image_size    
-        self.num_image_tokens = num_images_tokens
+        self.image_seq_len = num_images_tokens
 
 
         tokens_to_add = {"additional_special_tokens":[self.IMAGE_TOKEN]}
