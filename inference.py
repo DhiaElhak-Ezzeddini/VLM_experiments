@@ -1,6 +1,6 @@
 from PIL import Image
 import torch
-import fire 
+import fire
 from processing_inputs import PaliGemmaProcessor
 from gemma import KVCache, PaliGemmaForConditionalGeneration
 from utils import load_hf_model
@@ -13,7 +13,7 @@ def _sample_top_p(probs:torch.Tensor, top_p:float):
     mask = probs_cumsum - probs_sort > top_p
     probs_sort[mask] = 0.0
 
-    probs_sort.div_(probs_sort.sum(dim=-1, keepdim=True))
+    probs_sort.div_(probs_sort.sum(dim=-1))
     next_token = torch.multinomial(probs_sort, num_samples=1)
     next_token = torch.gather(probs_idx, dim=-1, index=next_token)
     return next_token
@@ -63,7 +63,7 @@ def test_inference(
             input_ids=input_ids,
             attention_mask=attention_mask,
             pixel_values=pixel_values,
-           kv_cache=kv_cache,
+            kv_cache=kv_cache,
         )
         kv_cache = outputs["kv_cache"]
         next_token_logits = outputs["logits"][:, -1, :]
@@ -71,20 +71,21 @@ def test_inference(
             next_token_logits = torch.softmax(next_token_logits / temperature, dim=-1)
             next_token = _sample_top_p(next_token_logits, top_p)
         else : 
-            next_token = torch.argmax(next_token_logits, dim=-1,keep_dim=True)
-        assert next_token.size == (1,1)
+            next_token = torch.argmax(next_token_logits, dim=-1,keepdim=True)
+        assert next_token.shape == (1,1) , f"Expected next_token to have shape (1,1), but got {next_token.shape}"
         next_token = next_token.squeeze(0)
         generated_tokens.append(next_token)
-        if next_token == stop_token:
-            break
+        #if next_token == stop_token:
+        #    break
         """ 
          starting from the second iteration, after the pre-filling step : 
-         as we are using KV Cache, we use the last generated token as the next input, so
+         as we are using KV Cache, we use the last generated token as    the next input, so
          only one single token will be presented as input and only one Query, one key and one value will be generated
          the generated value vector and key will be stored in the KV cache -- appended to the buffers of K and V
          and than attention will be computed using these K and V buffers alongside with the computed query vector
         """
         input_ids = next_token.unsqueeze(-1)
+
         attention_mask = torch.cat(
             [attention_mask, torch.ones(1,1, device=input_ids.device)], dim=1
         )
