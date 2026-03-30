@@ -125,7 +125,7 @@ class GemmaMLP(nn.Module):
         self.down_proj = nn.Linear(self.inter_size, self.hidden_size,bias=False) 
     
     def forward(self,x):
-        return self.down_proj(torch.nn.functional.silu(self.gate_proj(x),approximte="tanh") * self.up_proj(x))
+        return self.down_proj(torch.nn.functional.silu(self.gate_proj(x)    ) * self.up_proj(x))
 
 
 
@@ -133,11 +133,11 @@ def repeat_kv(hidden_states:torch.Tensor, num_repeats:int) -> torch.Tensor:
     """
     Repeat the input tensor along the sequence length dimension.
     """
-    batch_size, num_kv_heads, seq_len, head_dim = hidden_states.size()
+    B,H,S,D = hidden_states.size()
     if num_repeats == 1:
         return hidden_states
-    hidden_states = hidden_states[:,:,None,:,:].expand(batch_size, num_kv_heads, num_repeats, seq_len, head_dim)
-    return hidden_states.reshape(batch_size, num_kv_heads * num_repeats, seq_len, head_dim)
+    hidden_states = hidden_states.unsqueeze(2).expand(B, H, num_repeats, S, D)
+    return hidden_states.reshape(B, H * num_repeats, S, D)
 
 class GemmaRotaryEmbedding(nn.Module):
     def __init__(self,dim, max_position_embeddings=2048, base=1000, device = None):
@@ -208,7 +208,7 @@ class GemmaAttention(nn.Module):
         self.q_proj = nn.Linear(self.hidden_size, self.num_attention_heads * self.head_dim, bias=config.attention_bias)
         self.k_proj = nn.Linear(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=config.attention_bias)
         self.v_proj = nn.Linear(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=config.attention_bias)
-        self.out_proj = nn.Linear(self.num_attention_heads * self.head_dim, self.hidden_size, bias=config.attention_bias)
+        self.o_proj = nn.Linear(self.num_attention_heads * self.head_dim, self.hidden_size, bias=config.attention_bias)
 
         self.rotary_emb = GemmaRotaryEmbedding(
             self.head_dim,
@@ -223,6 +223,7 @@ class GemmaAttention(nn.Module):
                 **kwargs) -> Tuple[torch.Tensor,Optional[torch.Tensor],Optional[Tuple[torch.Tensor]]]:
          
         bsz , q_len, _ = hidden_states.size() # [batch_size,seq_len,hidden_size]
+
         # [B, Seq_len, Num_Heads_Q*Head_Dim]
         query_states = self.q_proj(hidden_states)
         # [B, Seq_len, Num_Heads_KV*Head_Dim]
@@ -236,16 +237,22 @@ class GemmaAttention(nn.Module):
         # [B, Num_heads_KV, Seq_len, Head_Dim]
         value_states = value_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1,2)
         # [B, Seq_len, head_dim],[B, Seq_len, head_dim], 
-        cos,sin = self.rotary_emb(value_states, position_ids, seq_len=None)
+
+        cos,sin = self.rotary_emb(value_states, position_ids, seq_len=q_len)
+
+        
         # [B, Num_heads_Q, Seq_len, Head_Dim], [B, Num_heads_KV, Seq_len, Head_Dim]
         query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
-
+    
         if kv_cache is not None :
             key_states, value_states = kv_cache.update(key_states, value_states,self.layer_idx)
+
 
         ## same num of heads of the query
         key_states = repeat_kv(key_states, self.num_key_value_groups)
         value_states = repeat_kv(value_states, self.num_key_value_groups)
+
+
 
         ## attention computation
         attn_weights = torch.matmul(query_states, key_states.transpose(2,3)) / math.sqrt(self.head_dim)
@@ -265,7 +272,7 @@ class GemmaAttention(nn.Module):
 
         attn_output = attn_output.transpose(1,2).contiguous()
         attn_output = attn_output.view(bsz,q_len,-1) ## conctenate all heads together
-        attn_output = self.out_proj(attn_output) # mixing the results of independent heads
+        attn_output = self.o_proj(attn_output) # mixing the results of independent heads
         
 
         return attn_output, attn_weights
@@ -282,13 +289,13 @@ class GemmaDecoderLayer(nn.Module):
         self.hidden_size = config.hidden_size
         self.self_attn = GemmaAttention(config,layer_idx)
         self.mlp = GemmaMLP(config)
-        self.input_rms_norm = GemmaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-        self.post_attention_rms_norm = GemmaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-    
-    
+        self.input_layernorm = GemmaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.post_attention_layernorm = GemmaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+
+
     def forward(self,hidden_states,attention_mask,position_ids,kv_cache=None):
         residual = hidden_states
-        hidden_states = self.input_rms_norm(hidden_states)
+        hidden_states = self.input_layernorm(hidden_states)
 
         hidden_states, _ = self.self_attn(
             hidden_states,
@@ -299,7 +306,7 @@ class GemmaDecoderLayer(nn.Module):
 
         hidden_states = residual + hidden_states
         residual = hidden_states
-        hidden_states = self.post_attention_rms_norm(hidden_states)
+        hidden_states = self.post_attention_layernorm(hidden_states)
         hidden_states = self.mlp(hidden_states)
         hidden_states = residual + hidden_states
         
@@ -341,6 +348,7 @@ class GemmaModel(nn.Module):
 
 class GemmaForCausalLM(nn.Module):
     def __init__(self,config):
+        super().__init__()
         self.config = config
         self.model  = GemmaModel(config)
         self.vocab_size = config.vocab_size
@@ -380,7 +388,7 @@ class PaliGemmaForConditionalGeneration(nn.Module):
         super().__init__()
         self.config = config
         self.vision_tower = SiglipVisionModel(config.vision_config)
-        self.multimodal_projector = PaliGemmaMultiModalProjector(config)
+        self.multi_modal_projector = PaliGemmaMultiModalProjector(config)
         self.vocab_size = config.vocab_size
 
         language_model = GemmaForCausalLM(config.text_config)
@@ -396,7 +404,7 @@ class PaliGemmaForConditionalGeneration(nn.Module):
     
     def _merge_inputs_ids_with_image_features(self,image_features:torch.tensor,input_embeds:torch.tensor,input_ids:torch.tensor,attention_mask:torch.Tensor= None,kv_cache: Optional[KVCache] = None):
         _,_,embed_dim = image_features.shape
-        batch_size, seq_len, _ = input_ids.shape
+        batch_size, seq_len  = input_ids.shape
         dtype, device = input_embeds.dtype, input_embeds.device
         scaled_image_features = image_features / (self.config.hidden_size ** 0.5)
         
@@ -436,13 +444,14 @@ class PaliGemmaForConditionalGeneration(nn.Module):
                 dtype=dtype,
                 device=device
             )
+            """
             ## here by choice the VLM is not causal in the sense that each token can attend to all tokens, even the future ones
             # but this is limited to the prefilling process, as if starting from the first generated token we will be using masking so that the tokens 
             # of the original query will not attend the generated tokens
             # and since we are generating one token at the time that should be attending all the previous tokens we don't need masking !!
             ## during training we must have a mask since the model will be generating all the tokens at the same time and we don't want the model to attend to the future tokens
             ## but during inference since we have the KV Cache we do not need to mask the future tokens
-            
+            """
         ## adding the head dimension 
         causal_mask = causal_mask.unsqueeze(1)
 
@@ -471,9 +480,8 @@ class PaliGemmaForConditionalGeneration(nn.Module):
         input_embeds = self.language_model.get_input_embeddings()(input_ids)
         # (B, num_patches, embed_dim)
         selected_image_features = self.vision_tower(pixel_values.to(input_embeds.dtype))
-        image_features = self.multimodal_projector(selected_image_features) ## ==> (B, num_patches, hidden_size)
-        input_embeds, attention_mask, position_ids = self._merge_inputs_ids_with_image_features(image_features, input_embeds, input_ids, attention_mask)
-
+        image_features = self.multi_modal_projector(selected_image_features) ## ==> (B, num_patches, hidden_size)
+        input_embeds, attention_mask, position_ids = self._merge_inputs_ids_with_image_features(image_features, input_embeds, input_ids, attention_mask,kv_cache=kv_cache)
 
         outputs = self.language_model(
             attention_mask=attention_mask,
